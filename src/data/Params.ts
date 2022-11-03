@@ -5,11 +5,12 @@
  */
 export class Params {
 
+    static Phaser = {
+        gameWidth: 0
+    };
+
     // modes
     static isDebugMode = false;
-
-    // sources
-    static assetsPath = './assets/';
 
     // utils
     static datGui: datGui.GUI;

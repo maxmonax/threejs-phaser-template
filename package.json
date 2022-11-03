@@ -26,6 +26,7 @@
   "dependencies": {
     "dat.gui": "^0.7.9",
     "gsap": "^3.11.3",
+    "phaser": "^3.55.2",
     "stats-js": "^1.0.1",
     "three": "^0.144.0",
     "ua-parser-js": "^1.0.32"

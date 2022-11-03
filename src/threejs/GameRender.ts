@@ -7,13 +7,13 @@ import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import * as datGui from "dat.gui";
-import { FrontEvents } from "./events/FrontEvents";
-import { InputMng } from "./utils/input/InputMng";
-import { DeviceInfo } from "./utils/DeviceInfo";
-import { Settings } from "./data/Settings";
-import { LogMng } from "./utils/LogMng";
-import { MyMath } from "./utils/MyMath";
-import { Params } from "./data/Params";
+import { FrontEvents } from "../events/FrontEvents";
+import { InputMng } from "../utils/input/InputMng";
+import { DeviceInfo } from "../utils/DeviceInfo";
+import { Settings } from "../data/Settings";
+import { LogMng } from "../utils/LogMng";
+import { MyMath } from "../utils/MyMath";
+import { Params } from "../data/Params";
 
 type Passes = {
     composer?: EffectComposer;
@@ -33,17 +33,17 @@ export class GameRender {
     private _clock: THREE.Clock;
     private _renderPixelRatio = 1;
 
-    constructor(aDomCanvasParent: HTMLElement) {
+    constructor() {
 
         this.initDebugGui();
 
-        this.initRenderer(aDomCanvasParent);
+        this.initRenderer(Settings.domThreejsParent);
         this.initScene();
         this.initPasses();
 
-        this.initInput(aDomCanvasParent);
+        this.initInput(Settings.domPhaserParent);
         this.initOrbitControl({
-            domElement: aDomCanvasParent,
+            domElement: Settings.domPhaserParent,
             camera: this._camera,
             enabled: true,
             minDist: 1,

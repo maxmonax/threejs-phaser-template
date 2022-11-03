@@ -23,14 +23,14 @@
     <script>
         
         window.addEventListener('gameBootCreated', (e) => {
+
+            // event for front GUI loading bar
+            document.getElementById('loader').remove();
+
             let gameBoot = e.detail.gameBoot;
             gameBoot.init({
-                domCanvasParent: document.getElementById('game'),
-                assetsPath: './assets/',
-                onLoadComplete: () => {
-                    // event for front GUI loading bar
-                    document.getElementById('loader').remove();
-                }
+                domThreejsParent: document.getElementById('game'),
+                domPhaserParent: document.getElementById('game-gui')
             });
         });
 
@@ -41,6 +41,7 @@
 <body>
     
     <div id="game"></div>
+    <div id="game-gui"></div>
     
     <div id="loader" class="loader">
         <div class="loader-cubes">

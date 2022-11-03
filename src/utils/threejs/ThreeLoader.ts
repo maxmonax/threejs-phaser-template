@@ -4,6 +4,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader";
 import { FontLoader, Font } from "three/examples/jsm/loaders/FontLoader";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader";
 import { LogMng } from "../LogMng";
+import { Callbacks } from "../Types";
 
 export enum ThreeLoaderResourceType {
     texture = 'texture',
@@ -38,16 +39,9 @@ type LoadItem = {
     files?: string[];
 };
 
-type CallbackItem = {
-    onProgress?: (aProgress: number) => void,
-    onComplete?: () => void,
-    onError?: () => void,
-    context?: any
-};
-
 type SetItem = {
     loadItem: LoadItem[],
-    callbacks: CallbackItem[],
+    callbacks: Callbacks[],
     loadCounter: number
 };
 
@@ -140,20 +134,26 @@ export class ThreeLoader {
     /**
      * Create new loading set and return set id
      */
-    createNewSet(aCallback?: CallbackItem): number {
+    createNewSet(aCallbacks?: Callbacks): number {
         this.setCounter++;
         let setId = this.setCounter;
         this.sets[setId] = {
             loadItem: [],
-            callbacks: aCallback ? [aCallback] : [],
+            callbacks: aCallbacks ? [aCallbacks] : [],
             loadCounter: 0
         };
         return setId;
     }
 
-    startSetLoading(aSetId: number, aCallback?: CallbackItem) {
+    startSetLoading(aSetId: number, aCallbacks?: Callbacks) {
         let setData = this.sets[aSetId];
-        if (aCallback) setData.callbacks.push(aCallback);
+        if (aCallbacks) setData.callbacks.push(aCallbacks);
+
+        if (setData.loadItem.length <= 0) {
+            this.onSetLoaded(aSetId);
+            return;
+        }
+
         for (let i = 0; i < setData.loadItem.length; i++) {
             const item = setData.loadItem[i];
             if (this.isItemLoaded(item.alias)) {
@@ -208,54 +208,7 @@ export class ThreeLoader {
         });
     }
 
-    // start() {
-    // if (this.totalItems <= 0) {
-    //     this.loadComplete();
-    //     return;
-    // }
-
-    // for (let i = 0; i < this.loadQueue.length; i++) {
-    //     const ldata = this.loadQueue[i];
-    //     this.loadByData(ldata);
-    // }
-    // }
-
-    // loadSingleTexture(aKey: string, aImg: string, onComplete: Function, isRepeat = false) {
-    //     let cache = this.cache;
-    //     let loader = new THREE.TextureLoader();
-    //     loader.crossOrigin = "Anonymous";
-    //     loader.load(aImg,
-    //         (tex: THREE.Texture) => {
-    //             // loaded
-    //             if (this._params.isDebugMode) console.log('loadSingleTexture: complete (' + aKey + '):', tex);
-    //             cache[aKey] = tex;
-    //             if (onComplete) onComplete();
-    //         },
-    //         null,
-    //         (err) => {
-    //             // error
-    //             if (this._params.retryCount > 0) {
-    //                 if (!this.retryCounter[aKey]) this.retryCounter[aKey] = 0;
-    //                 this.retryCounter[aKey]++;
-    //                 if (this.retryCounter[aKey] <= this._params.retryCount) {
-    //                     this.logWarn(`loadSingleTexture: retry loading ${this.retryCounter[aKey]} (${aKey})`);
-    //                     setTimeout(() => {
-    //                         this.loadSingleTexture(aKey, aImg, onComplete, true);
-    //                     }, 100);
-    //                 }
-    //                 else {
-    //                     this.logError(`loadSingleTexture error (try cnt ${this.retryCount}):`);
-    //                     console.log(err);
-    //                 }
-    //             }
-    //             else {
-    //                 this.logError('loadSingleTexture error:');
-    //                 console.log(err);
-    //             }
-    //         });
-    // }
-
-    loadSet(aSet: LoadItem[], aCallbacks: CallbackItem) {
+    loadSet(aSet: LoadItem[], aCallbacks: Callbacks) {
 
         let setId = this.createNewSet(aCallbacks);
 
@@ -281,17 +234,6 @@ export class ThreeLoader {
 
     }
 
-    // private loadComplete() {
-    //     this._isLoaded = true;
-    //     this.loadQueue = [];
-    //     this.onLoadCompleteSignal.dispatch();
-    // }
-
-    // private nextLoad() {
-    //     this.currLoadData = this.loadQueue.shift();
-    //     this.loadByData(this.currLoadData);
-    // }
-
     private loadSetItem(aSetId: number, aData: LoadItem) {
 
         switch (aData.type) {
@@ -299,10 +241,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.texture:
                 this.loadTexture(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -310,10 +252,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.cubeTexture:
                 this.loadCubeTexture(aData.alias, aData.files, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -321,10 +263,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.obj:
                 this.loadObj(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -332,10 +274,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.fbx:
                 this.loadFBX(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -344,10 +286,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.gltf:
                 this.loadGLB(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -355,10 +297,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.json:
                 this.loadJSON(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -366,10 +308,10 @@ export class ThreeLoader {
             case ThreeLoaderResourceType.font:
                 this.loadFont(aData.alias, aData.file, {
                     onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     },
                     onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
+                        this.onSetFileLoaded(aSetId, aData);
                     }
                 });
                 break;
@@ -381,78 +323,31 @@ export class ThreeLoader {
 
     }
 
-    private onSetFileFinished(aSetId: number, aData: LoadItem) {
+    private onSetFileLoaded(aSetId: number, aData: LoadItem) {
         let sd = this.sets[aSetId];
-        sd.loadCounter++;
+        sd.loadCounter = Math.min(sd.loadCounter + 1, sd.loadItem.length);
 
-        console.log(`onSetFileFinished: `, {
-            loadCounter: sd.loadCounter,
-            totalFiles: sd.loadItem.length
-        });
+        if (this._params.isDebugMode) {
+            console.log(`onSetFileLoaded: `, {
+                loadCounter: sd.loadCounter,
+                totalFiles: sd.loadItem.length
+            });
+        }
 
-
-        if (sd.loadCounter == sd.loadItem.length) {
-            // set loaded
-            for (let i = 0; i < sd.callbacks.length; i++) {
-                const cb = sd.callbacks[i];
-                if (cb.onComplete) cb.onComplete.call(cb.context);
-            }
-            // clear set
-            this.sets[aSetId] = null;
+        if (sd.loadItem.length == 0 || sd.loadCounter == sd.loadItem.length) {
+            this.onSetLoaded(aSetId);
         }
     }
 
-    // private loadByData(aData: LoadItem) {
-
-    //     switch (aData.type) {
-
-    //         case ResType.texture:
-    //             this.loadTexture(aData.alias, aData.file);
-    //             break;
-
-    //         case ResType.cubeTexture:
-    //             this.loadCubeTexture(aData.alias, aData.files);
-    //             break;
-
-    //         case ResType.obj:
-    //             this.loadObj(aData.alias, aData.file);
-    //             break;
-
-    //         case ResType.fbx:
-    //             this.loadFBX(aData.alias, aData.file);
-    //             break;
-
-    //         case ResType.glb:
-    //         case ResType.gltf:
-    //             this.loadGLB(aData.alias, aData.file);
-    //             break;
-
-    //         case ResType.json:
-    //             this.loadJSON(aData.alias, aData.file);
-    //             break;
-
-    //         case ResType.font:
-    //             this.loadFont(aData.alias, aData.file);
-    //             break;
-
-    //         default:
-    //             this.logError('loadByData() -> unknown data type: ' + aData.type);
-    //             break;
-    //     }
-
-    // }
-
-    // private onItemLoaded() {
-    //     this.currItem++;
-    //     this.onLoadUpdateSignal.dispatch(100 * this.currItem / this.totalItems);
-
-    //     if (this.currItem >= this.totalItems) {
-    //         this.loadComplete();
-    //         return;
-    //     }
-    // }
-
-
+    private onSetLoaded(aSetId: number) {
+        let sd = this.sets[aSetId];
+        for (let i = 0; i < sd.callbacks.length; i++) {
+            const cb = sd.callbacks[i];
+            if (cb.onComplete) cb.onComplete.call(cb.context);
+        }
+        // clear set
+        this.sets[aSetId] = null;
+    }
 
     /**
      * 
@@ -460,7 +355,7 @@ export class ThreeLoader {
      * @param aFile 
      * @param ctx 
      */
-    private loadTexture(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadTexture(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         let loader = new THREE.TextureLoader();
         loader.crossOrigin = "Anonymous";
         loader.load(aFile,
@@ -502,7 +397,7 @@ export class ThreeLoader {
             });
     }
 
-    private loadCubeTexture(aAlias: string, aFiles: string[], aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadCubeTexture(aAlias: string, aFiles: string[], aCallbacks?: Callbacks, aRetryCount = 0) {
         let cache = this.cache;
         let loader = new THREE.CubeTextureLoader();
         loader.crossOrigin = "Anonymous";
@@ -544,7 +439,7 @@ export class ThreeLoader {
             });
     }
 
-    private loadObj(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadObj(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         var loader = new OBJLoader();
         loader.load(aFile,
             (aObj: THREE.Group) => {
@@ -579,7 +474,7 @@ export class ThreeLoader {
         );
     }
 
-    private loadFBX(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadFBX(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         let loader = new FBXLoader();
         loader.load(aFile,
             (aObj: THREE.Group) => {
@@ -614,7 +509,7 @@ export class ThreeLoader {
         );
     }
 
-    private loadGLB(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadGLB(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         let loader = new GLTFLoader();
         loader.load(aFile,
             (aObj: GLTF) => {
@@ -674,7 +569,7 @@ export class ThreeLoader {
         xhr.send();
     }
 
-    private loadJSON(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadJSON(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         this.loadJSONFromUrl(aFile,
             (aError, aData) => {
                 if (aError !== null) {
@@ -708,7 +603,7 @@ export class ThreeLoader {
         );
     }
 
-    private loadFont(aAlias: string, aFile: string, aCallbacks?: CallbackItem, aRetryCount = 0) {
+    private loadFont(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
         let fontLoader = new FontLoader();
         fontLoader.load(aFile,
             (aFont: Font) => {

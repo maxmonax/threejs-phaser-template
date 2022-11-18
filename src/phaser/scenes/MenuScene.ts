@@ -23,7 +23,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     public init(aData: any) {
-        
+
     }
 
     public preload(): void {
@@ -37,6 +37,15 @@ export class MenuScene extends Phaser.Scene {
 
         this.btnClose = new Phaser.GameObjects.Image(this, 0, 80, 'game', 'btnClose');
         this.btnClose.setInteractive({ cursor: 'pointer' });
+        this.btnClose.on('pointerdown', () => {
+            this.btnClose['isPointerDown'] = true;
+            LogMng.debug(`Close Btn pointerdown!`);
+        });
+        this.btnClose.on('pointerup', () => {
+            if (this.btnClose['isPointerDown'] != true) return;
+            this.btnClose['isPointerDown'] = false;
+            LogMng.debug(`Close Btn click!`);
+        });
         this.updateBtnClosePos();
         this.add.existing(this.btnClose);
 
@@ -119,6 +128,7 @@ export class MenuScene extends Phaser.Scene {
         
         if (this.btnClose) {
             if (aObj[0] == this.btnClose && this.btnClose['isMouseDown']) {
+                LogMng.debug(`CloseBtn Clicked!`);
                 // this.onCloseClick();
             }
             this.btnClose['isMouseDown'] = false;

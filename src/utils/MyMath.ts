@@ -127,7 +127,7 @@ export class MyMath {
     /**
      * 
      * @param c number in 0-255 format
-     * @returns 
+     * @returns hex string like AF, D6 etc
      */
     static byteToHexStr(c: number): string {
         let hex = c.toString(16);
@@ -196,10 +196,18 @@ export class MyMath {
      *
      * @return {number} The angle in radians.
      */
-    public static angleBetween2VectorsATan(x1: number, y1: number, x2: number, y2: number) {
+    public static angleBetweenATan(x1: number, y1: number, x2: number, y2: number) {
         return Math.atan2(y2 - y1, x2 - x1);
     };
 
+    /**
+     * Find the angle between 2 vectors (x1, y1) -> (x2, y2).
+     * @param x1 
+     * @param y1 
+     * @param x2 
+     * @param y2 
+     * @returns 
+     */
     public static angleBetweenACos(x1: number, y1: number, x2: number, y2: number) {
         let scalar = x1 * x2 + y1 * y2;
         let mod1 = Math.sqrt(x1 * x1 + y1 * y1);
@@ -207,6 +215,14 @@ export class MyMath {
         return Math.acos(scalar / (mod1 * mod2));
     };
 
+    /**
+     * Find the angle between 2 vectors (x1, y1) -> (x2, y2).
+     * @param x1 
+     * @param y1 
+     * @param x2 
+     * @param y2 
+     * @returns 
+     */
     public static angleBetweenASin(x1: number, y1: number, x2: number, y2: number) {
         let scalar = x1 * x2 + y1 * y2;
         let mod1 = Math.sqrt(x1 * x1 + y1 * y1);
@@ -243,6 +259,60 @@ export class MyMath {
 
     public static isCirclesIntersect(x1: number, y1: number, r1: number, x2: number, y2: number, r2: number): boolean {
         return MyMath.getVector2DLength(x1, y1, x2, y2) <= r1 + r2;
+    }
+
+    // INTERPOLATION
+    
+    /**
+     * Linear interpolation
+     * @param min 
+     * @param max 
+     * @param perc 
+     * @returns 
+     */
+    public static getValueBetween(min: number, max: number, perc: number): number {
+        return min + (max - min) * perc;
+    }
+
+    /**
+     * Calculates the factorial of a given number for integer values greater than 0.
+     * @param {number} aValue - A positive integer to calculate the factorial of.
+     * @return {number} The factorial of the given number.
+     */
+    public static factorial(aValue: number) {
+        if (aValue === 0) return 1;
+        let res = aValue;
+        while (--aValue) {
+            res *= aValue;
+        }
+        return res;
+    };
+
+    /**
+     * Calculates the Bernstein basis from the three factorial coefficients.
+     * @param {number} n - The first value.
+     * @param {number} i - The second value.
+     *
+     * @return {number} The Bernstein basis of Factorial(n) / Factorial(i) / Factorial(n - i)
+     */
+    public static bernstein(n, i) {
+        return this.factorial(n) / this.factorial(i) / this.factorial(n - i);
+    };
+
+    /**
+    * A bezier interpolation method.
+    * @param {number[]} v - The input array of values to interpolate between.
+    * @param {number} k - The percentage of interpolation, between 0 and 1.
+    *
+    * @return {number} The interpolated value.
+    */
+    public static bezierInterpolation(v: number[], k: number) {
+        var b = 0;
+        var n = v.length - 1;
+        for (var i = 0; i <= n; i++) {
+            b += Math.pow(1 - k, n - i) * Math.pow(k, i) * v[i] * this.bernstein(n, i);
+        }
+        return b;
     }
 
 }

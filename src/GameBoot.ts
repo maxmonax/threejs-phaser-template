@@ -40,8 +40,7 @@ export class GameBoot {
         if (!Settings.domThreejsParent) LogMng.warn(`Settings.domThreejsParent == null`);
         Settings.domPhaserParent = aParams.domPhaserParent;
         if (!Settings.domPhaserParent) LogMng.warn(`Settings.domPhaserParent == null`);
-
-
+        
         // GET Params
         this.readGETParams();
 

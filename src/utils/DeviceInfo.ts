@@ -7,14 +7,9 @@ export class DeviceInfo {
     private _desktop = false;
 
     private constructor() {
-        
-        if (DeviceInfo.instance) throw new Error("Don't use DeviceInfo.constructor(), it's SINGLETON, use getInstance() method");
-
         this.parserResult = new UAParser().getResult();
-
         let devTypes = ['console', 'mobile', 'tablet', 'smarttv', 'wearable', 'embedded'];
         this._desktop = devTypes.indexOf(this.parserResult.device.type) < 0;
-
     }
 
     static getInstance(): DeviceInfo {

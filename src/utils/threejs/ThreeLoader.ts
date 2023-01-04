@@ -4,19 +4,18 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader";
 import { FontLoader, Font } from "three/examples/jsm/loaders/FontLoader";
 import { GLTFLoader, GLTF } from "three/examples/jsm/loaders/GLTFLoader";
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils';
 import { LogMng } from "../LogMng";
 import { Callbacks } from "../Types";
 
-export enum ThreeLoaderResourceType {
+export enum ThreeLoaderFileType {
     texture = 'texture',
     cubeTexture = 'cubeTexture',
     hdr = 'hdr',
-
     obj = 'obj',
     fbx = 'fbx',
     glb = 'glb',
     gltf = 'gltf',
-
     json = 'json',
     font = 'font',
     gz = 'gz',
@@ -30,7 +29,6 @@ enum AliasPreference {
 };
 
 type LoaderParams = {
-    isDebugMode?: boolean;
     retryCount?: number;
     textureMapping?: THREE.Mapping;
     textureEncoding?: THREE.TextureEncoding;
@@ -53,20 +51,38 @@ export class ThreeLoader {
 
     private static instance: ThreeLoader = null;
 
-    _params: LoaderParams;
+    private _textureLoader: THREE.TextureLoader;
+    private _rgbeLoader: RGBELoader;
+    private _objLoader: OBJLoader;
+    private _fbxLoader: FBXLoader;
+
+    private _params: LoaderParams;
 
     private cache: { [index: string]: any } = {};
     private sets: { [index: number]: SetItem } = {};
 
-    private retryCount = 0;
     private setCounter = 0;
 
     private constructor(aParams: LoaderParams) {
+
         if (ThreeLoader.instance) {
             throw new Error("Don't use ThreeLoader.constructor(), it's SINGLETON, use getInstance() method");
         }
+
+        this._textureLoader = new THREE.TextureLoader();
+        this._textureLoader.crossOrigin = "Anonymous";
+
+        this._rgbeLoader = new RGBELoader();
+        this._rgbeLoader.crossOrigin = "Anonymous";
+        // loader.setPath()
+
+        this._objLoader = new OBJLoader();
+        this._objLoader.crossOrigin = "Anonymous";
+
+        this._fbxLoader = new FBXLoader();
+        this._fbxLoader.crossOrigin = "Anonymous";
+
         this._params = aParams || {};
-        if (!this._params.isDebugMode) this._params.isDebugMode = false;
         if (!this._params.retryCount) this._params.retryCount = 0;
     }
 
@@ -75,31 +91,39 @@ export class ThreeLoader {
         return ThreeLoader.instance;
     }
 
-    private logDebug(aMessage: string) {
-        LogMng.debug('ThreeLoader: ' + aMessage);
+    private logDebug(aMessage: string, aData?: any) {
+        LogMng.debug(`ThreeLoader: ${aMessage}`, aData);
     }
 
-    private logWarn(aMessage: string) {
-        LogMng.warn('ThreeLoader: ' + aMessage);
+    private logWarn(aMessage: string, aData?: any) {
+        LogMng.warn(`ThreeLoader: ${aMessage}`, aData);
     }
 
-    private logError(aMessage: string) {
-        LogMng.error('ThreeLoader: ' + aMessage);
+    private logError(aMessage: string, aData?: any) {
+        LogMng.error(`ThreeLoader: ${aMessage}`, aData);
     }
 
-    private getResType(aFileName: string): string {
+    private getFileType(aFileName: string): ThreeLoaderFileType {
+
+        let fn = aFileName;
+
+        // remove file GET postfix
+        if (fn.indexOf('?') > 0) {
+            fn = fn.substring(0, fn.indexOf('?'));
+        }
 
         let fileType = '';
-        for (let i = aFileName.length - 1; i >= 0; i--) {
-            if (aFileName[i] == '.') {
-                if (fileType == ThreeLoaderResourceType.gz || fileType == ThreeLoaderResourceType.gzip) {
+        for (let i = fn.length - 1; i >= 0; i--) {
+            if (fn[i] == '.') {
+                if (fileType == ThreeLoaderFileType.gz || fileType == ThreeLoaderFileType.gzip) {
+                    // ignore archive types
                     fileType = '';
                     continue;
                 }
                 break;
             }
             else {
-                fileType = aFileName[i] + fileType;
+                fileType = fn[i] + fileType;
             }
         }
 
@@ -115,23 +139,37 @@ export class ThreeLoader {
             // case 'mp4':
             case 'ogg':
             case 'ogv':
-                return ThreeLoaderResourceType.texture;
+                return ThreeLoaderFileType.texture;
                 break;
 
             default:
-                return fileType;
+                return fileType as ThreeLoaderFileType;
                 break;
         }
 
     }
 
-    private isItemLoaded(aKey: string): boolean {
+    private isAliasInLoader(aAlias: string): boolean {
+
         // check in cache
-        if (this.cache[aKey]) {
-            this.logWarn(`itemExists ${aKey}:`);
-            console.log(this.cache[aKey]);
+        if (this.cache[aAlias]) {
+            this.logWarn(`item exists in cache ${aAlias}:`, this.cache[aAlias]);
             return true;
         }
+
+        // check in sets
+        for (const key in this.sets) {
+            const set = this.sets[key];
+            if (!set) continue;
+            for (let i = 0; i < set.loadItem.length; i++) {
+                const item = set.loadItem[i];
+                if (item.alias == aAlias) {
+                    this.logWarn(`item exists in loading sets ${aAlias}:`, item);
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -149,28 +187,23 @@ export class ThreeLoader {
         return setId;
     }
 
-    startSetLoading(aSetId: number, aCallback?: Callbacks) {
-        let setData = this.sets[aSetId];
-        if (aCallback) setData.callbacks.push(aCallback);
-        for (let i = 0; i < setData.loadItem.length; i++) {
-            const item = setData.loadItem[i];
-            if (this.isItemLoaded(item.alias)) {
-                this.logWarn(`item ${item.alias} already loaded!`);
-                continue;
-            }
-            this.loadSetItem(aSetId, item);
-        }
-    }
-
-    addFileToSet(aSetId: number, aAlias: string, aFile: string) {
-        if (this.isItemLoaded(aAlias)) {
-            this.logError(`addFileToSet() -> File with same alias (${aAlias}) already exists in cache!`);
+    /**
+    * Add any file to set except CubeTexture | Font
+    * @param aSetId 
+    * @param aItem 
+    * @returns 
+    */
+    addFileToSet(aSetId: number, aItem: LoadItem) {
+        // addFileToSet(aSetId: number, aAlias: LoadItem) {
+        if (this.isAliasInLoader(aItem.alias)) {
+            // this.logError(`addFileToSet() -> File with same alias (${aAlias}) already exists in cache!`);
+            throw new Error(`addFileToSet() -> File with same alias (${aItem.alias}) already exists in loader!`);
             return;
         }
         this.sets[aSetId].loadItem.push({
-            type: this.getResType(aFile),
-            alias: aAlias,
-            file: aFile
+            type: aItem.type != null ? aItem.type : this.getFileType(aItem.file),
+            alias: aItem.alias,
+            file: aItem.file
         });
     }
 
@@ -181,78 +214,36 @@ export class ThreeLoader {
      * @returns 
      */
     addCubeTextureToSet(aSetId: number, aAlias: string, aFiles: string[]) {
-        if (this.isItemLoaded(aAlias)) {
-            this.logError(`addCubeTextureToSet() -> File with same alias (${aAlias}) already exists in cache!`);
+        if (this.isAliasInLoader(aAlias)) {
+            this.logError(`addCubeTextureToSet() -> File with same alias (${aAlias}) already exists in loader!`);
             return;
         }
         // this.loadQueue.push({ type: ResType.cubeTexture, key: aAlias, files: files });
         this.sets[aSetId].loadItem.push({
-            type: ThreeLoaderResourceType.cubeTexture,
+            type: ThreeLoaderFileType.cubeTexture,
             alias: aAlias,
             files: aFiles
         });
     }
 
     addFontToSet(aSetId: number, aAlias: string, aFile: string) {
-        if (this.isItemLoaded(aAlias)) {
-            this.logError(`addFontToSet() -> File with same alias (${aAlias}) already exists in cache!`);
+        if (this.isAliasInLoader(aAlias)) {
+            this.logError(`addFontToSet() -> File with same alias (${aAlias}) already exists in loader!`);
             return;
         }
         // this.loadQueue.push({ type: ResType.font, key: aAlias, file: aFile });
         this.sets[aSetId].loadItem.push({
-            type: ThreeLoaderResourceType.font,
+            type: ThreeLoaderFileType.font,
             alias: aAlias,
             file: aFile
         });
     }
 
-    // start() {
-    // if (this.totalItems <= 0) {
-    //     this.loadComplete();
-    //     return;
-    // }
-
-    // for (let i = 0; i < this.loadQueue.length; i++) {
-    //     const ldata = this.loadQueue[i];
-    //     this.loadByData(ldata);
-    // }
-    // }
-
-    // loadSingleTexture(aKey: string, aImg: string, onComplete: Function, isRepeat = false) {
-    //     let cache = this.cache;
-    //     let loader = new THREE.TextureLoader();
-    //     loader.crossOrigin = "Anonymous";
-    //     loader.load(aImg,
-    //         (tex: THREE.Texture) => {
-    //             // loaded
-    //             if (this._params.isDebugMode) console.log('loadSingleTexture: complete (' + aKey + '):', tex);
-    //             cache[aKey] = tex;
-    //             if (onComplete) onComplete();
-    //         },
-    //         null,
-    //         (err) => {
-    //             // error
-    //             if (this._params.retryCount > 0) {
-    //                 if (!this.retryCounter[aKey]) this.retryCounter[aKey] = 0;
-    //                 this.retryCounter[aKey]++;
-    //                 if (this.retryCounter[aKey] <= this._params.retryCount) {
-    //                     this.logWarn(`loadSingleTexture: retry loading ${this.retryCounter[aKey]} (${aKey})`);
-    //                     setTimeout(() => {
-    //                         this.loadSingleTexture(aKey, aImg, onComplete, true);
-    //                     }, 100);
-    //                 }
-    //                 else {
-    //                     this.logError(`loadSingleTexture error (try cnt ${this.retryCount}):`);
-    //                     console.log(err);
-    //                 }
-    //             }
-    //             else {
-    //                 this.logError('loadSingleTexture error:');
-    //                 console.log(err);
-    //             }
-    //         });
-    // }
-
+    /**
+     * Load file list
+     * @param aSet 
+     * @param aCallbacks 
+     */
     loadSet(aSet: LoadItem[], aCallbacks: Callbacks) {
 
         let setId = this.createNewSet(aCallbacks);
@@ -261,15 +252,15 @@ export class ThreeLoader {
             const item = aSet[i];
             switch (item.type) {
 
-                case ThreeLoaderResourceType.cubeTexture:
+                case ThreeLoaderFileType.cubeTexture:
                     this.addCubeTextureToSet(setId, item.alias, item.files);
                     break;
 
-                case ThreeLoaderResourceType.font:
+                case ThreeLoaderFileType.font:
                     this.addFontToSet(setId, item.alias, item.file);
 
                 default:
-                    this.addFileToSet(setId, item.alias, item.file);
+                    this.addFileToSet(setId, item);
                     break;
 
             }
@@ -279,128 +270,41 @@ export class ThreeLoader {
 
     }
 
-    // private loadComplete() {
-    //     this._isLoaded = true;
-    //     this.loadQueue = [];
-    //     this.onLoadCompleteSignal.dispatch();
-    // }
+    /**
+     * Start loading of Set
+     * @param aSetId 
+     * @param aCallback 
+     */
+    startSetLoading(aSetId: number, aCallback?: Callbacks) {
+        let setData = this.sets[aSetId];
+        if (aCallback) setData.callbacks.push(aCallback);
 
-    // private nextLoad() {
-    //     this.currLoadData = this.loadQueue.shift();
-    //     this.loadByData(this.currLoadData);
-    // }
-
-    private loadSetItem(aSetId: number, aData: LoadItem) {
-
-        switch (aData.type) {
-
-            case ThreeLoaderResourceType.texture:
-                this.loadTexture(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.cubeTexture:
-                this.loadCubeTexture(aData.alias, aData.files, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.hdr:
-                this.loadHdr(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.obj:
-                this.loadObj(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.fbx:
-                this.loadFBX(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.glb:
-            case ThreeLoaderResourceType.gltf:
-                this.loadGLB(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.json:
-                this.loadJSON(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            case ThreeLoaderResourceType.font:
-                this.loadFont(aData.alias, aData.file, {
-                    onComplete: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    },
-                    onError: () => {
-                        this.onSetFileFinished(aSetId, aData);
-                    }
-                });
-                break;
-
-            default:
-                this.logError('loadByData() -> unknown data type: ' + aData.type);
-                break;
+        if (setData.loadItem.length <= 0) {
+            this.onSetFileFinished(aSetId);
         }
 
+        // start each file
+        for (let i = 0; i < setData.loadItem.length; i++) {
+            this.loadSetItem(aSetId, setData.loadItem[i]);
+        }
     }
 
-    private onSetFileFinished(aSetId: number, aData: LoadItem) {
+    /**
+     * Set loading finished
+     * @param aSetId 
+     * @param aData 
+     * @param aError 
+     */
+    private onSetFileFinished(aSetId: number, aData?: LoadItem, aError?: any) {
         let sd = this.sets[aSetId];
         sd.loadCounter++;
 
-        console.log(`onSetFileFinished: `, {
+        this.logDebug(`onSetFileFinished ${aError != null ? '(ERROR)' : ''} (${aData.alias}): `, {
             loadCounter: sd.loadCounter,
             totalFiles: sd.loadItem.length
         });
 
-
-        if (sd.loadCounter == sd.loadItem.length) {
+        if (sd.loadCounter >= sd.loadItem.length) {
             // set loaded
             for (let i = 0; i < sd.callbacks.length; i++) {
                 const cb = sd.callbacks[i];
@@ -409,258 +313,269 @@ export class ThreeLoader {
             // clear set
             this.sets[aSetId] = null;
         }
+        else {
+            for (let i = 0; i < sd.callbacks.length; i++) {
+                const cb = sd.callbacks[i];
+                if (cb.onProgress) cb.onProgress.call(cb.context, sd.loadCounter / sd.loadItem.length);
+            }
+        }
+
     }
 
-    // private loadByData(aData: LoadItem) {
+    /**
+     * Load 1 item from Set
+     * @param aSetId 
+     * @param aItem 
+     */
+    private loadSetItem(aSetId: number, aItem: LoadItem) {
 
-    //     switch (aData.type) {
+        switch (aItem.type) {
 
-    //         case ResType.texture:
-    //             this.loadTexture(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.texture:
+                this.loadTexture(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: (aError?: any) => {
+                        this.onSetFileFinished(aSetId, aItem, aError);
+                    }
+                });
+                break;
 
-    //         case ResType.cubeTexture:
-    //             this.loadCubeTexture(aData.alias, aData.files);
-    //             break;
+            case ThreeLoaderFileType.cubeTexture:
+                this.loadCubeTexture(aItem.alias, aItem.files, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    }
+                });
+                break;
 
-    //         case ResType.obj:
-    //             this.loadObj(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.hdr:
+                this.loadHdr(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    }
+                });
+                break;
 
-    //         case ResType.fbx:
-    //             this.loadFBX(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.obj:
+                this.loadObj(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: (aError?: any) => {
+                        this.onSetFileFinished(aSetId, aItem, aError);
+                    }
+                });
+                break;
 
-    //         case ResType.glb:
-    //         case ResType.gltf:
-    //             this.loadGLB(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.fbx:
+                this.loadFBX(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: (aError?: any) => {
+                        this.onSetFileFinished(aSetId, aItem, aError);
+                    }
+                });
+                break;
 
-    //         case ResType.json:
-    //             this.loadJSON(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.glb:
+            case ThreeLoaderFileType.gltf:
+                this.loadGLB(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    }
+                });
+                break;
 
-    //         case ResType.font:
-    //             this.loadFont(aData.alias, aData.file);
-    //             break;
+            case ThreeLoaderFileType.json:
+                this.loadJSON(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    }
+                });
+                break;
 
-    //         default:
-    //             this.logError('loadByData() -> unknown data type: ' + aData.type);
-    //             break;
-    //     }
+            case ThreeLoaderFileType.font:
+                this.loadFont(aItem.alias, aItem.file, {
+                    onComplete: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    },
+                    onError: () => {
+                        this.onSetFileFinished(aSetId, aItem);
+                    }
+                });
+                break;
 
-    // }
+            default:
+                this.logError('loadByData() -> unknown data type: ' + aItem.type);
+                break;
+        }
 
-    // private onItemLoaded() {
-    //     this.currItem++;
-    //     this.onLoadUpdateSignal.dispatch(100 * this.currItem / this.totalItems);
-
-    //     if (this.currItem >= this.totalItems) {
-    //         this.loadComplete();
-    //         return;
-    //     }
-    // }
-
-
+    }
 
     /**
-     * 
-     * @param aAlias 
-     * @param aFile 
-     * @param ctx 
+     * Load texture file
      */
     private loadTexture(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        let loader = new THREE.TextureLoader();
-        loader.crossOrigin = "Anonymous";
-        loader.load(aFile,
-            (tex: THREE.Texture) => {
-                // loaded
-                if (this._params.textureMapping) tex.mapping = this._params.textureMapping;
-                if (this._params.textureEncoding) tex.encoding = this._params.textureEncoding;
-                if (this._params.isDebugMode) {
-                    this.logDebug(`loadTexture -> (${aAlias}) file(${aFile}):`);
-                    console.log(tex);
-                }
-                this.cache[aAlias] = tex;
-                //this.onItemLoaded();
+        this._textureLoader.load(aFile,
+            (aTexture: THREE.Texture) => {
+                this.logDebug(`loadTexture: Complete (${aAlias}) file(${aFile}):`, aTexture);
+                // pre setups
+                if (this._params.textureMapping) aTexture.mapping = this._params.textureMapping;
+                if (this._params.textureEncoding) aTexture.encoding = this._params.textureEncoding;
+                // save to cache
+                this.cache[aAlias] = aTexture;
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            null,
-            (err) => {
-                // error
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadTexture -> retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadTexture(aAlias, aFile, aCallbacks, aRetryCount);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadTexture -> (${aAlias}) ERROR (try cnt ${this.retryCount}):`);
-                        console.log(err);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
+            },
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadTexture: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError('loadTexture error:');
-                    this.logError(`alias: ${aAlias}; file: ${aFile};`);
-                    console.log(err);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadTexture: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadTexture(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 100);
                 }
             });
     }
 
     private loadCubeTexture(aAlias: string, aFiles: string[], aCallbacks?: Callbacks, aRetryCount = 0) {
-        let cache = this.cache;
         let loader = new THREE.CubeTextureLoader();
         loader.crossOrigin = "Anonymous";
         loader.load(aFiles,
-            (aTex: THREE.CubeTexture) => {
-                // loaded
-                if (this._params.textureMapping) aTex.mapping = this._params.textureMapping;
-                if (this._params.textureEncoding) aTex.encoding = this._params.textureEncoding;
-                if (this._params.isDebugMode) console.log(`loadCubeTexture: load complete (${aAlias}):`, aTex);
-                cache[aAlias] = aTex;
+            (cubeTexture: THREE.CubeTexture) => {
+                // pre sets
+                if (this._params.textureMapping) cubeTexture.mapping = this._params.textureMapping;
+                if (this._params.textureEncoding) cubeTexture.encoding = this._params.textureEncoding;
+                // to cache
+                this.cache[aAlias] = cubeTexture;
+                this.logDebug(`loadCubeTexture: load complete (${aAlias}):`, cubeTexture);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            (xhr) => {
-
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
             },
-            (err) => {
-                // error
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadCubeTexture -> retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadCubeTexture(aAlias, aFiles, aCallbacks, aRetryCount);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadCubeTexture error (try cnt ${this.retryCount}):`);
-                        console.log(err);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadCubeTexture: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError('loadCubeTexture error:');
-                    this.logError(`alias: ${aAlias};`);
-                    console.log(`files: `, aFiles);
-                    console.log(err);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadCubeTexture: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadCubeTexture(aAlias, aFiles, aCallbacks, aRetryCount);
+                    }, 100);
                 }
             });
     }
 
     private loadHdr(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        let loader = new RGBELoader();
-        loader.crossOrigin = "Anonymous";
-        // loader.setPath()
-        loader.load(aFile,
-            (tex: THREE.Texture) => {
-                // loaded
-                if (this._params.textureMapping) tex.mapping = this._params.textureMapping;
-                if (this._params.textureEncoding) tex.encoding = this._params.textureEncoding;
-                if (this._params.isDebugMode) {
-                    this.logDebug(`loadHdr -> (${aAlias}) file(${aFile}):`);
-                    console.log(tex);
-                }
-                this.cache[aAlias] = tex;
-                //this.onItemLoaded();
+        this._rgbeLoader.load(aFile,
+            (textureData: THREE.DataTexture) => {
+                // pre sets
+                if (this._params.textureMapping) textureData.mapping = this._params.textureMapping;
+                if (this._params.textureEncoding) textureData.encoding = this._params.textureEncoding;
+                // to cache
+                this.cache[aAlias] = textureData;
+                this.logDebug(`loadHdr: Complete (${aAlias}) file(${aFile}):`, textureData);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            null,
-            (err) => {
-                // error
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadHdr -> retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadHdr(aAlias, aFile, aCallbacks, aRetryCount);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadHdr -> (${aAlias}) ERROR (try cnt ${this.retryCount}):`);
-                        console.log(err);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
+            },
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadHdr: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError('loadHdr error:');
-                    this.logError(`alias: ${aAlias}; file: ${aFile};`);
-                    console.log(err);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadHdr: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadHdr(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 200);
                 }
             });
     }
 
     private loadObj(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        var loader = new OBJLoader();
-        loader.load(aFile,
+        this._objLoader.load(aFile,
             (aObj: THREE.Group) => {
                 this.cache[aAlias] = aObj;
-                if (this._params.isDebugMode) console.log('loadObj: load complete (' + aAlias + '):', aObj);
+                this.logDebug(`loadObj: Complete (${aAlias}):`, aObj);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            (xhr) => {
-                //debug('OBJ loading progress: ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
             },
             (error) => {
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadObj -> retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadObj(aAlias, aFile);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadObj -> ERROR (try cnt ${this.retryCount}):`);
-                        console.log(error);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadObj: ERROR (${aRetryCount} retries):`, error);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, error);
                 }
                 else {
-                    this.logError(`loadObj -> ERROR (${aAlias}):`);
-                    console.log(error);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadObj: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadObj(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 100);
                 }
             }
         );
     }
 
     private loadFBX(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        let loader = new FBXLoader();
-        loader.load(aFile,
+        this._fbxLoader.load(aFile,
             (aObj: THREE.Group) => {
-                if (this._params.isDebugMode) console.log('loadFBX: load complete (' + aAlias + '):', aObj);
                 this.cache[aAlias] = aObj;
+                this.logDebug(`loadFBX: Complete (${aAlias}):`, aObj);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            (xhr) => {
-                //debug('FBX loading progress: ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
             },
-            (error) => {
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadFBX: retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadFBX(aAlias, aFile, aCallbacks, aRetryCount);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadFBX error (try cnt ${this.retryCount}):`);
-                        console.log(error);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadFBX: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError('loadFBX error:');
-                    console.log(error);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadFBX: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadFBX(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 200);
                 }
             }
         );
@@ -671,33 +586,25 @@ export class ThreeLoader {
         loader.load(aFile,
             (aObj: GLTF) => {
                 this.cache[aAlias] = aObj;
-                if (this._params.isDebugMode) console.log(`loadGLB: load complete (${aAlias}):`, aObj);
+                this.logDebug(`loadGLB: load complete (${aAlias}):`, aObj);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            (xhr) => {
-                //if (xhr.total > 0) this.logDebug('GLB loading progress: ' + (xhr.loaded / xhr.total * 100) + '% loaded');
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
             },
-            (error) => {
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadGLB: retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadGLB(aAlias, aFile);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadGLB failed: number of tries: ${this.retryCount}`);
-                        this.logError(`key: ${aAlias}; file: ${aFile};`);
-                        console.log(error);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadGLB: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError(`loadGLB error:`);
-                    this.logError(`key: ${aAlias}; file: ${aFile};`);
-                    console.log(error);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadGLB: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadGLB(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 200);
                 }
             }
         );
@@ -730,30 +637,22 @@ export class ThreeLoader {
         this.loadJSONFromUrl(aFile,
             (aError, aData) => {
                 if (aError !== null) {
-                    if (this.retryCount > 0) {
-                        aRetryCount++;
-                        if (aRetryCount <= this.retryCount) {
-                            this.logWarn(`loadJSON: retry loading ${aRetryCount} (${aAlias})`);
-                            setTimeout(() => {
-                                this.loadJSON(aAlias, aFile, aCallbacks, aRetryCount);
-                            }, 100);
-                        }
-                        else {
-                            this.logError(`loadJSON error (try cnt ${this.retryCount}):`);
-                            console.log(aError);
-                            if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                        }
+                    const retryMaxCount = this._params.retryCount;
+                    if (aRetryCount >= retryMaxCount) {
+                        this.logError(`loadJSON: ERROR (${aRetryCount} retries):`, aError);
+                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, aError);
                     }
                     else {
-                        this.logError('loadJSON error:');
-                        console.log(aError);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                        aRetryCount++;
+                        this.logWarn(`loadJSON: Retry ${aRetryCount} (${aAlias})`);
+                        setTimeout(() => {
+                            this.loadJSON(aAlias, aFile, aCallbacks, aRetryCount);
+                        }, 200);
                     }
                 }
                 else {
                     this.cache[aAlias] = aData;
-                    if (this._params.isDebugMode) console.log(`loadJSON: load complete (${aAlias}):`, aData);
-                    // this.onItemLoaded();
+                    this.logDebug(`loadJSON: Complete (${aAlias}):`, aData);
                     if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
                 }
             }
@@ -765,36 +664,29 @@ export class ThreeLoader {
         fontLoader.load(aFile,
             (aFont: Font) => {
                 this.cache[aAlias] = aFont;
-                if (this._params.isDebugMode) console.log(`loadFont: load complete (${aAlias}):`, aFont);
+                this.logDebug(`loadFont: load complete (${aAlias}):`, aFont);
                 if (aCallbacks && aCallbacks.onComplete) aCallbacks.onComplete.call(aCallbacks.context);
             },
-            (event) => {
-                // on progress event
+            (progressEvent) => {
+                let p = progressEvent.loaded / progressEvent.total;
+                if (aCallbacks && aCallbacks.onProgress) aCallbacks.onProgress.call(aCallbacks.context, p);
             },
-            (error) => {
-                if (this.retryCount > 0) {
-                    aRetryCount++;
-                    if (aRetryCount <= this.retryCount) {
-                        this.logWarn(`loadFont: retry loading ${aRetryCount} (${aAlias})`);
-                        setTimeout(() => {
-                            this.loadFont(aAlias, aFile);
-                        }, 100);
-                    }
-                    else {
-                        this.logError(`loadFont error (try cnt ${this.retryCount}):`);
-                        console.log(error);
-                        if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
-                    }
+            (errorEvent) => {
+                const retryMaxCount = this._params.retryCount;
+                if (aRetryCount >= retryMaxCount) {
+                    this.logError(`loadFont: ERROR (${aRetryCount} retries):`, errorEvent);
+                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context, errorEvent);
                 }
                 else {
-                    this.logError(`loadFont error:`);
-                    console.log(error);
-                    if (aCallbacks && aCallbacks.onError) aCallbacks.onError.call(aCallbacks.context);
+                    aRetryCount++;
+                    this.logWarn(`loadFont: Retry ${aRetryCount} (${aAlias})`);
+                    setTimeout(() => {
+                        this.loadFont(aAlias, aFile, aCallbacks, aRetryCount);
+                    }, 200);
                 }
             }
         );
     }
-
 
     getTexture(aAlias: string): THREE.Texture {
         let data = this.cache[aAlias];
@@ -813,19 +705,26 @@ export class ThreeLoader {
      */
     getModel(aAlias: string, aGetRealData = false): THREE.Group {
         let data = this.cache[aAlias];
-        if (!data) this.logWarn('getModel() -> key not found: ' + aAlias);
+
+        if (!data) {
+            this.logWarn(`getModel() -> key not found: ${aAlias}`);
+            return null;
+        }
+
         if (data instanceof THREE.Group) {
 
             if (aGetRealData) return data;
 
-            // try to clone
-            let copy = data.clone(true);
-            for (const key in data) {
-                if (!Object.prototype.hasOwnProperty.call(copy, key)) {
-                    copy[key] = data[key];
-                }
-            }
-            return copy;
+            // try to clone - OLD
+            // let copy = data.clone(true);
+            // for (const key in data) {
+            //     if (!Object.prototype.hasOwnProperty.call(copy, key)) {
+            //         copy[key] = data[key];
+            //     }
+            // }
+
+            let copy = SkeletonUtils.clone(data);
+            return copy as THREE.Group;
         }
         else {
             this.logWarn(`getModel() -> data for key (${aAlias}) is not THREE.Group, use anothe method!`);

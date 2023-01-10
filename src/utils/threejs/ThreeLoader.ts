@@ -35,7 +35,7 @@ type LoaderParams = {
 };
 
 type LoadItem = {
-    type?: string;
+    type?: ThreeLoaderFileType;
     alias: string;
     file?: string;
     files?: string[];
@@ -51,11 +51,6 @@ export class ThreeLoader {
 
     private static instance: ThreeLoader = null;
 
-    private _textureLoader: THREE.TextureLoader;
-    private _rgbeLoader: RGBELoader;
-    private _objLoader: OBJLoader;
-    private _fbxLoader: FBXLoader;
-
     private _params: LoaderParams;
 
     private cache: { [index: string]: any } = {};
@@ -69,21 +64,9 @@ export class ThreeLoader {
             throw new Error("Don't use ThreeLoader.constructor(), it's SINGLETON, use getInstance() method");
         }
 
-        this._textureLoader = new THREE.TextureLoader();
-        this._textureLoader.crossOrigin = "Anonymous";
-
-        this._rgbeLoader = new RGBELoader();
-        this._rgbeLoader.crossOrigin = "Anonymous";
-        // loader.setPath()
-
-        this._objLoader = new OBJLoader();
-        this._objLoader.crossOrigin = "Anonymous";
-
-        this._fbxLoader = new FBXLoader();
-        this._fbxLoader.crossOrigin = "Anonymous";
-
         this._params = aParams || {};
         if (!this._params.retryCount) this._params.retryCount = 0;
+
     }
 
     static getInstance(aParams: LoaderParams = null): ThreeLoader {
@@ -188,11 +171,11 @@ export class ThreeLoader {
     }
 
     /**
-    * Add any file to set except CubeTexture | Font
-    * @param aSetId 
-    * @param aItem 
-    * @returns 
-    */
+     * Add any file to set except CubeTexture | Font
+     * @param aSetId 
+     * @param aItem 
+     * @returns 
+     */
     addFileToSet(aSetId: number, aItem: LoadItem) {
         // addFileToSet(aSetId: number, aAlias: LoadItem) {
         if (this.isAliasInLoader(aItem.alias)) {
@@ -431,7 +414,9 @@ export class ThreeLoader {
      * Load texture file
      */
     private loadTexture(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        this._textureLoader.load(aFile,
+        let textureLoader = new THREE.TextureLoader();
+        textureLoader.crossOrigin = "Anonymous";
+        textureLoader.load(aFile,
             (aTexture: THREE.Texture) => {
                 this.logDebug(`loadTexture: Complete (${aAlias}) file(${aFile}):`, aTexture);
                 // pre setups
@@ -495,7 +480,9 @@ export class ThreeLoader {
     }
 
     private loadHdr(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        this._rgbeLoader.load(aFile,
+        let rgbeLoader = new RGBELoader();
+        rgbeLoader.crossOrigin = "Anonymous";
+        rgbeLoader.load(aFile,
             (textureData: THREE.DataTexture) => {
                 // pre sets
                 if (this._params.textureMapping) textureData.mapping = this._params.textureMapping;
@@ -526,7 +513,9 @@ export class ThreeLoader {
     }
 
     private loadObj(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        this._objLoader.load(aFile,
+        let objLoader = new OBJLoader();
+        objLoader.crossOrigin = "Anonymous";
+        objLoader.load(aFile,
             (aObj: THREE.Group) => {
                 this.cache[aAlias] = aObj;
                 this.logDebug(`loadObj: Complete (${aAlias}):`, aObj);
@@ -554,7 +543,9 @@ export class ThreeLoader {
     }
 
     private loadFBX(aAlias: string, aFile: string, aCallbacks?: Callbacks, aRetryCount = 0) {
-        this._fbxLoader.load(aFile,
+        let fbxLoader = new FBXLoader();
+        fbxLoader.crossOrigin = "Anonymous";
+        fbxLoader.load(aFile,
             (aObj: THREE.Group) => {
                 this.cache[aAlias] = aObj;
                 this.logDebug(`loadFBX: Complete (${aAlias}):`, aObj);
@@ -715,7 +706,7 @@ export class ThreeLoader {
 
             if (aGetRealData) return data;
 
-            // try to clone - OLD
+            // try to clone
             // let copy = data.clone(true);
             // for (const key in data) {
             //     if (!Object.prototype.hasOwnProperty.call(copy, key)) {

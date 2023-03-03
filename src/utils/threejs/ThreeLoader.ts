@@ -155,7 +155,7 @@ export class ThreeLoader {
 
         return false;
     }
-
+    
     /**
      * Create new loading set and return set id
      */
@@ -282,7 +282,7 @@ export class ThreeLoader {
         let sd = this.sets[aSetId];
         sd.loadCounter++;
 
-        this.logDebug(`onSetFileFinished ${aError != null ? '(ERROR)' : ''} (${aData.alias}): `, {
+        this.logDebug(`onSetFileFinished ${aError != null ? '(ERROR)' : ''} (${aData?.alias}): `, {
             loadCounter: sd.loadCounter,
             totalFiles: sd.loadItem.length
         });

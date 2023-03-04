@@ -1,5 +1,7 @@
 import { GameBoot } from './GameBoot';
 import { FrontEvents } from './events/FrontEvents';
+import "./css/main.css";
+import "./css/loader.css";
 
 window.addEventListener('load', () => {
     let gameBoot = new GameBoot();
